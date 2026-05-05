@@ -7,18 +7,32 @@ on:
     branches: ["main"]
 
 env:
-  REGISTRY: ghcr.io/${{ github.repository_owner }}
   APP_VERSION: v1.3.0
-  PYTHON_VERSION: "3.11"
+  PYTHON_VERSION: "3.12"
   NODE_VERSION: "20"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   backend-tests:
     name: Backend • Tests
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: cacaoscan_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -35,6 +49,15 @@ jobs:
         working-directory: backend
         env:
           DJANGO_SETTINGS_MODULE: cacaoscan.settings
+          APP_ENV: test
+          DB_NAME: cacaoscan_test
+          DB_USER: postgres
+          DB_PASSWORD: postgres
+          DB_HOST: localhost
+          DB_PORT: "5432"
+          SECRET_KEY: ci-test-secret-key-not-for-production
+          USE_REDIS: "False"
+          USE_CELERY_REDIS: "False"
         run: pytest --maxfail=1 --disable-warnings -q
 
   frontend-tests:
@@ -42,16 +65,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: "pnpm"
-
-      - name: Install pnpm
-        run: npm install -g pnpm@8
+          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Install dependencies
         working-directory: frontend
@@ -72,10 +98,15 @@ jobs:
       packages: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Compute lowercase registry
+        run: echo "REGISTRY=ghcr.io/${OWNER,,}" >> "$GITHUB_ENV"
+        env:
+          OWNER: ${{ github.repository_owner }}
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
@@ -85,7 +116,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push backend image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./backend
           target: backend
@@ -97,7 +128,7 @@ jobs:
             APP_VERSION=${{ env.APP_VERSION }}
 
       - name: Build and push celery image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./backend
           target: celery
@@ -109,7 +140,7 @@ jobs:
             APP_VERSION=${{ env.APP_VERSION }}
 
       - name: Build and push frontend image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./frontend
           tags: |
@@ -123,9 +154,21 @@ jobs:
     name: Seguridad • Trivy
     runs-on: ubuntu-latest
     needs: docker-build
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: read
+    env:
+      TRIVY_USERNAME: ${{ github.actor }}
+      TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+
+      - name: Compute lowercase registry
+        run: echo "REGISTRY=ghcr.io/${OWNER,,}" >> "$GITHUB_ENV"
+        env:
+          OWNER: ${{ github.repository_owner }}
 
       - name: Run Trivy on backend
         uses: aquasecurity/trivy-action@v0.19.0

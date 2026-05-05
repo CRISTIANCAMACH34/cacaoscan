@@ -72,6 +72,13 @@ __pycache__/
 *.so
 *.cache
 
+# Cobertura de tests
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.pytest_cache/
+
 # Archivos de IDE
 .vscode/
 .idea/
@@ -141,5 +148,8 @@ backend/ml/logs/django.log
 backend/ml/ml.log
 *.log
 *.logs
+
+# Claude Code local (logs, cache, artefactos de sesión)
+.claude/
 
 
